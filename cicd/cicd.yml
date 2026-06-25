@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Minimal CodePipeline skeleton using GitHub as source and CloudFormation deploy for webapp.
+
+Parameters:
+  PipelineName:
+    Type: String
+    Default: bhs-webapp-pipeline
+  GitHubOwner:
+    Type: String
+    Description: GitHub owner or organization
+  GitHubRepo:
+    Type: String
+    Description: Repository name
+  GitHubBranch:
+    Type: String
+    Default: main
+  GitHubOAuthToken:
+    Type: String
+    NoEcho: true
+    Description: Personal access token for GitHub (scopes: repo)
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHub_Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              Configuration:
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubOAuthToken
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: Deploy_Webapp
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: bhs-webapp
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: SourceOutput::webapp/webapp.yml
+              InputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+
+Outputs:
+  PipelineNameOut:
+    Value: !Ref Pipeline
+    Description: Created CodePipeline name

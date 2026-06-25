@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# このファイルがCloudFormationテンプレートであることを示すバージョン宣言（固定値）
+
+Description: >-
+  CloudFormation template to create an S3-backed static site with CloudFront.
+  Uses OAC (Origin Access Control) instead of deprecated OAI.
+
+# ===================================================
+# Parameters: デプロイ時に外から渡せる変数
+# ===================================================
+Parameters:
+  Prefix:
+    Type: String
+    Default: dev-apne1
+    # --parameter-overrides で上書き可能。リソース名の先頭に付けて環境を区別する
+    # 例: dev-apne1-bhs-indonesia-webapp / prod-apne1-bhs-indonesia-webapp
+
+# ===================================================
+# Resources: 実際に作成するAWSリソースの定義
+# ===================================================
+Resources:
+
+  # ---------------------------------------------------
+  # S3バケット: ビルドしたNuxtのファイルを置く場所
+  # ---------------------------------------------------
+  StaticSiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${Prefix}-bhs-indonesia-webapp"
+      # !Sub は文字列の中に変数を埋め込む関数
+      # → 例: "dev-apne1-bhs-indonesia-webapp"
+
+      VersioningConfiguration:
+        Status: Enabled
+        # ファイルの変更履歴を保持する。誤って上書きしても元に戻せる
+
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+        # S3への直接アクセスを全ブロック。
+        # CloudFront経由でしかアクセスできなくする（セキュリティのベストプラクティス）
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+              # S3に保存されるファイルをAES256で暗号化する
+
+  # ---------------------------------------------------
+  # OAC: CloudFrontがS3にアクセスするための認証設定
+  # 「CloudFrontだけにS3へのアクセスを許可する」ための仕組み
+  # ---------------------------------------------------
+  StaticSiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${Prefix}-bhs-indonesia-webapp-oac"
+        OriginAccessControlOriginType: s3   # S3向けの設定
+        SigningBehavior: always             # 常に署名付きリクエストを使う
+        SigningProtocol: sigv4             # AWS標準の署名方式
+
+  # ---------------------------------------------------
+  # バケットポリシー: S3側で「誰がアクセスできるか」を定義するルール
+  # ---------------------------------------------------
+  StaticSiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticSiteBucket
+      # !Ref は他のリソースを参照する関数。ここではバケット名が入る
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalGetObject  # ルールの名前（任意）
+            Effect: Allow                                   # 許可
+            Principal:
+              Service: cloudfront.amazonaws.com            # CloudFrontサービスからのアクセスを
+            Action: s3:GetObject                           # ファイル取得に限定して
+            Resource: !Sub "arn:aws:s3:::${Prefix}-bhs-indonesia-webapp/*"
+            # バケット内の全ファイルが対象（末尾の /* が重要）
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${StaticSiteDistribution}"
+                # さらに条件を絞る：「このCloudFrontディストリビューションからだけ」許可
+                # 他のAWSアカウントのCloudFrontからのアクセスを防ぐ
+
+  # ---------------------------------------------------
+  # CloudFrontディストリビューション: CDN（コンテンツ配信ネットワーク）の設定
+  # 世界中にキャッシュを配置して高速・安全に配信する
+  # ---------------------------------------------------
+  StaticSiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "CloudFront for ${Prefix}-bhs-indonesia-webapp"
+        Enabled: true
+        DefaultRootObject: index.html
+        # URLのルート（/）にアクセスされたとき index.html を返す
+
+        Origins:
+          # 「オリジン」= コンテンツの取得元。ここではS3バケット
+          - Id: S3Origin                    # このオリジンの識別名（後で参照する）
+            DomainName: !GetAtt StaticSiteBucket.RegionalDomainName
+            # !GetAtt は他のリソースの属性を取得する関数
+            # → S3バケットのリージョナルドメイン名（例: xxx.s3.ap-northeast-1.amazonaws.com）
+            S3OriginConfig:
+              OriginAccessIdentity: ""      # OAC使用時は空文字が必須（旧方式との互換のため）
+            OriginAccessControlId: !GetAtt StaticSiteOAC.Id
+            # 上で作ったOACを紐付ける
+
+        DefaultCacheBehavior:
+          # 全リクエストに適用されるキャッシュ・配信ルール
+          TargetOriginId: S3Origin          # 上で定義したオリジンを使う
+          ViewerProtocolPolicy: redirect-to-https
+          # HTTPでアクセスされてもHTTPSにリダイレクト（常時SSL）
+          AllowedMethods: [GET, HEAD]       # 静的サイトなのでGETとHEADだけ許可
+          CachedMethods: [GET, HEAD]        # GETとHEADのレスポンスをキャッシュ
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          #
