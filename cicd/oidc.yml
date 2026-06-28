@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  OIDC Provider and IAM Role for GitHub Actions.
+  Allows GitHub Actions to assume an IAM Role without AWS access keys.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: dev-apne1
+    Description: Environment prefix (e.g. dev-apne1).
+
+  GitHubOrg:
+    Type: String
+    Default: nozomishira
+    Description: GitHub organization or user name.
+
+  WebAppRepo:
+    Type: String
+    Default: bhs-webapp
+    Description: GitHub repository name for the webapp.
+
+Resources:
+  # ---------------------------------------------------
+  # OIDCプロバイダー: AWSにGitHubを信頼させる設定
+  # これによりGitHub ActionsがAWSに一時的なトークンでアクセスできる
+  # ---------------------------------------------------
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        # GitHubのOIDCエンドポイントの証明書サムプリント（固定値）
+
+  # ---------------------------------------------------
+  # IAMロール: GitHub Actionsが引き受けるロール
+  # S3へのアップロードとCloudFrontのキャッシュ削除だけを許可する
+  # ---------------------------------------------------
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-github-actions-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt GitHubOIDCProvider.Arn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${WebAppRepo}:ref:refs/heads/develop"
+                  # developブランチからのみロールを引き受けられる
+
+      Policies:
+        - PolicyName: !Sub "${Prefix}-github-actions-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3へのアップロード権限
+              - Sid: AllowS3Sync
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${Prefix}-bhs-indonesia-webapp"
+                  - !Sub "arn:aws:s3:::${Prefix}-bhs-indonesia-webapp/*"
+
+              # CloudFrontのキャッシュ削除権限
+              - Sid: AllowCloudFrontInvalidation
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                Resource: "*"
+
+Outputs:
+  GitHubActionsRoleArn:
+    Description: IAM Role ARN for GitHub Actions
+    Value: !GetAtt GitHubActionsRole.Arn
