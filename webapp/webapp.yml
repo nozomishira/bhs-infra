@@ -117,4 +117,43 @@ Resources:
           AllowedMethods: [GET, HEAD]       # 静的サイトなのでGETとHEADだけ許可
           CachedMethods: [GET, HEAD]        # GETとHEADのレスポンスをキャッシュ
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          #
+          # AWS managed "CachingOptimized" ポリシー（固定UUID）
+
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_200
+        # 配信エッジロケーションの範囲（コスト最適化のため一部リージョンに絞る想定）
+
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          # SPA的なルーティング対応：403/404をindex.htmlにフォールバック
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          # 独自ドメイン未設定のためCloudFrontのデフォルト証明書を使用
+
+# ===================================================
+# Outputs: スタック作成後に外部から参照できる値
+# ===================================================
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket hosting the static site
+    Value: !Ref StaticSiteBucket
+    Export:
+      Name: !Sub "${Prefix}-bhs-indonesia-webapp-bucket-name"
+
+  DistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref StaticSiteDistribution
+    Export:
+      Name: !Sub "${Prefix}-bhs-indonesia-webapp-distribution-id"
+
+  DistributionDomainName:
+    Description: CloudFront Distribution domain name
+    Value: !GetAtt StaticSiteDistribution.DomainName
+    Export:
+      Name: !Sub "${Prefix}-bhs-indonesia-webapp-distribution-domain"

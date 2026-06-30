@@ -19,13 +19,35 @@ Parameters:
     Default: bhs-webapp
     Description: GitHub repository name for the webapp.
 
+  Branch:
+    Type: String
+    Default: develop
+    Description: >-
+      Branch allowed to assume this role via OIDC.
+      dev環境は develop、test環境は test、prod環境は main を指定する想定。
+
+Conditions:
+  # 複数アカウントでOIDCプロバイダーを使い回す場合、
+  # 同一アカウント内で2回目以降のデプロイだとOIDCProviderの重複作成エラーになる。
+  # 将来test/prod用にこのテンプレートを同一アカウント内で再デプロイする場合は
+  # 既存のOIDCProviderを参照する形に切り替える想定（下記注記参照）。
+  IsDev: !Equals [!Ref Prefix, "dev-apne1"]
+
 Resources:
   # ---------------------------------------------------
   # OIDCプロバイダー: AWSにGitHubを信頼させる設定
   # これによりGitHub ActionsがAWSに一時的なトークンでアクセスできる
+  #
+  # 注意: OIDCプロバイダーはAWSアカウントごとに1つしか作成できない。
+  # test/prod環境を「同一AWSアカウント内」に作る場合は、
+  # このリソースをスタックごとに重複作成しないよう、
+  # 2環境目以降はこのリソース定義を削除し、
+  # !ImportValue や直接ARN指定で既存プロバイダーを参照する変更が必要。
+  # （アカウントを分離する場合はこの注意は不要）
   # ---------------------------------------------------
   GitHubOIDCProvider:
     Type: AWS::IAM::OIDCProvider
+    Condition: IsDev
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList:
@@ -47,15 +69,20 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !GetAtt GitHubOIDCProvider.Arn
+              Federated: !If
+                - IsDev
+                - !GetAtt GitHubOIDCProvider.Arn
+                - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+                # dev環境以外は新規作成せず、アカウントに既存のOIDCプロバイダーARNを直接組み立てて参照
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
                 token.actions.githubusercontent.com:sub:
-                  - !Sub "repo:${GitHubOrg}/${WebAppRepo}:ref:refs/heads/develop"
-                  # developブランチからのみロールを引き受けられる
+                  - !Sub "repo:${GitHubOrg}/${WebAppRepo}:ref:refs/heads/${Branch}"
+                  # Branchパラメータで指定したブランチからのみロールを引き受けられる
+                  # dev: develop / test: test / prod: main を想定
 
       Policies:
         - PolicyName: !Sub "${Prefix}-github-actions-policy"
@@ -84,3 +111,5 @@ Outputs:
   GitHubActionsRoleArn:
     Description: IAM Role ARN for GitHub Actions
     Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: !Sub "${Prefix}-github-actions-role-arn"

@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "Prefix",
+    "ParameterValue": "prod-apne1"
+  },
+  {
+    "ParameterKey": "GitHubOrg",
+    "ParameterValue": "nozomishira"
+  },
+  {
+    "ParameterKey": "WebAppRepo",
+    "ParameterValue": "bhs-webapp"
+  },
+  {
+    "ParameterKey": "Branch",
+    "ParameterValue": "main"
+  }
+]
