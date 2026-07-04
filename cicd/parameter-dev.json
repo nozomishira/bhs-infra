@@ -14,5 +14,9 @@
   {
     "ParameterKey": "Branch",
     "ParameterValue": "develop"
+  },
+  {
+    "ParameterKey": "Env",
+    "ParameterValue": "dev"
   }
 ]

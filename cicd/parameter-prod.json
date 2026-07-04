@@ -14,5 +14,9 @@
   {
     "ParameterKey": "Branch",
     "ParameterValue": "main"
+  },
+  {
+    "ParameterKey": "Env",
+    "ParameterValue": "prod"
   }
 ]

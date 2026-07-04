@@ -14,6 +14,10 @@ Parameters:
     Default: dev-apne1
     # --parameter-overrides で上書き可能。リソース名の先頭に付けて環境を区別する
     # 例: dev-apne1-bhs-indonesia-webapp / prod-apne1-bhs-indonesia-webapp
+  Env:
+    Type: String
+    Default: dev
+
 
 # ===================================================
 # Resources: 実際に作成するAWSリソースの定義
