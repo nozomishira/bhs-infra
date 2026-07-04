@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "Prefix",
+    "ParameterValue": "dev-apne1"
+  },
+  {
+    "ParameterKey": "Env",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "WebAppOrigin",
+    "ParameterValue": "*"
+  },
+  {
+    "ParameterKey": "LambdaRuntime",
+    "ParameterValue": "nodejs24.x"
+  }
+]

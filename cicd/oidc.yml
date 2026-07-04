@@ -2,6 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   OIDC Provider and IAM Role for GitHub Actions.
   Allows GitHub Actions to assume an IAM Role without AWS access keys.
+  対象リポジトリ:
+    - bhs-webapp  : S3 + CloudFront (静的サイトデプロイ)
+    - bhs-webapi  : Lambda (quiz-api などのコードデプロイ)
 
 Parameters:
   Prefix:
@@ -17,7 +20,12 @@ Parameters:
   WebAppRepo:
     Type: String
     Default: bhs-webapp
-    Description: GitHub repository name for the webapp.
+    Description: GitHub repository name for the webapp (S3/CloudFront デプロイ用).
+
+  WebApiRepo:
+    Type: String
+    Default: bhs-webapi
+    Description: GitHub repository name for the webapi (Lambda デプロイ用).
 
   Branch:
     Type: String
@@ -25,28 +33,20 @@ Parameters:
     Description: >-
       Branch allowed to assume this role via OIDC.
       dev環境は develop、test環境は test、prod環境は main を指定する想定。
+
   Env:
     Type: String
     Default: dev
 
 Conditions:
-  # 複数アカウントでOIDCプロバイダーを使い回す場合、
-  # 同一アカウント内で2回目以降のデプロイだとOIDCProviderの重複作成エラーになる。
-  # 将来test/prod用にこのテンプレートを同一アカウント内で再デプロイする場合は
-  # 既存のOIDCProviderを参照する形に切り替える想定（下記注記参照）。
+  # OIDCプロバイダーはAWSアカウントごとに1つしか作成できない。
+  # dev環境のみ作成し、test/prod は既存プロバイダーを参照する。
   IsDev: !Equals [!Ref Prefix, "dev-apne1"]
 
 Resources:
+
   # ---------------------------------------------------
   # OIDCプロバイダー: AWSにGitHubを信頼させる設定
-  # これによりGitHub ActionsがAWSに一時的なトークンでアクセスできる
-  #
-  # 注意: OIDCプロバイダーはAWSアカウントごとに1つしか作成できない。
-  # test/prod環境を「同一AWSアカウント内」に作る場合は、
-  # このリソースをスタックごとに重複作成しないよう、
-  # 2環境目以降はこのリソース定義を削除し、
-  # !ImportValue や直接ARN指定で既存プロバイダーを参照する変更が必要。
-  # （アカウントを分離する場合はこの注意は不要）
   # ---------------------------------------------------
   GitHubOIDCProvider:
     Type: AWS::IAM::OIDCProvider
@@ -57,16 +57,14 @@ Resources:
         - sts.amazonaws.com
       ThumbprintList:
         - 6938fd4d98bab03faadb97b34396831e3780aea1
-        # GitHubのOIDCエンドポイントの証明書サムプリント（固定値）
 
   # ---------------------------------------------------
-  # IAMロール: GitHub Actionsが引き受けるロール
-  # S3へのアップロードとCloudFrontのキャッシュ削除だけを許可する
+  # IAMロール (webapp用): S3アップロード + CloudFront Invalidation
   # ---------------------------------------------------
-  GitHubActionsRole:
+  GitHubActionsWebAppRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${Prefix}-github-actions-role"
+      RoleName: !Sub "${Prefix}-github-actions-webapp-role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -76,7 +74,6 @@ Resources:
                 - IsDev
                 - !GetAtt GitHubOIDCProvider.Arn
                 - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
-                # dev環境以外は新規作成せず、アカウントに既存のOIDCプロバイダーARNを直接組み立てて参照
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
@@ -84,11 +81,8 @@ Resources:
               StringLike:
                 token.actions.githubusercontent.com:sub:
                   - !Sub "repo:${GitHubOrg}/${WebAppRepo}:ref:refs/heads/${Branch}"
-                  # Branchパラメータで指定したブランチからのみロールを引き受けられる
-                  # dev: develop / test: test / prod: main を想定
-
       Policies:
-        - PolicyName: !Sub "${Prefix}-github-actions-policy"
+        - PolicyName: !Sub "${Prefix}-github-actions-webapp-policy"
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -111,15 +105,79 @@ Resources:
                 Resource: "*"
 
               # CFnスタックのOutputs参照権限（DistributionIdの動的取得に使用）
-              - Sid: AllowCloudFormationDescribe
+              - Sid: AllowCloudFormationDescribeWebapp
                 Effect: Allow
                 Action:
                   - cloudformation:DescribeStacks
-                Resource: !Sub "arn:aws:cloudformation:ap-northeast-1:${AWS::AccountId}:stack/${Env}-bhs-indonesia-webapp/*"
+                Resource:
+                  - !Sub "arn:aws:cloudformation:ap-northeast-1:${AWS::AccountId}:stack/${Env}-bhs-indonesia-webapp/*"
+
+  # ---------------------------------------------------
+  # IAMロール (webapi用): Lambda コードのデプロイ
+  # bhs-webapi リポジトリの GitHub Actions が使用する
+  # ---------------------------------------------------
+  GitHubActionsWebApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-github-actions-webapi-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - IsDev
+                - !GetAtt GitHubOIDCProvider.Arn
+                - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${WebApiRepo}:ref:refs/heads/${Branch}"
+      Policies:
+        - PolicyName: !Sub "${Prefix}-github-actions-webapi-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Lambda コードの更新
+              - Sid: AllowLambdaUpdate
+                Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:PublishVersion
+                  - lambda:GetFunction
+                Resource:
+                  # quiz-api
+                  - !Sub "arn:aws:lambda:ap-northeast-1:${AWS::AccountId}:function:${Prefix}-bhs-quiz-api"
+                  # 将来の Lambda を追加する場合はここに追記
+                  # - !Sub "arn:aws:lambda:ap-northeast-1:${AWS::AccountId}:function:${Prefix}-bhs-chat-api"
+
+              # CFnスタックのOutputs参照権限（LambdaFunctionName の動的取得に使用）
+              - Sid: AllowCloudFormationDescribeWebapi
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                Resource:
+                  - !Sub "arn:aws:cloudformation:ap-northeast-1:${AWS::AccountId}:stack/${Env}-bhs-indonesia-webapi/*"
 
 Outputs:
+  # 後方互換のため旧名称も残す（既存 GitHub Actions ワークフローが参照している場合に対応）
   GitHubActionsRoleArn:
-    Description: IAM Role ARN for GitHub Actions
-    Value: !GetAtt GitHubActionsRole.Arn
+    Description: "(Deprecated) Use GitHubActionsWebAppRoleArn instead"
+    Value: !GetAtt GitHubActionsWebAppRole.Arn
     Export:
       Name: !Sub "${Prefix}-github-actions-role-arn"
+
+  GitHubActionsWebAppRoleArn:
+    Description: IAM Role ARN for GitHub Actions (webapp - S3/CloudFront)
+    Value: !GetAtt GitHubActionsWebAppRole.Arn
+    Export:
+      Name: !Sub "${Prefix}-github-actions-webapp-role-arn"
+
+  GitHubActionsWebApiRoleArn:
+    Description: IAM Role ARN for GitHub Actions (webapi - Lambda deploy)
+    Value: !GetAtt GitHubActionsWebApiRole.Arn
+    Export:
+      Name: !Sub "${Prefix}-github-actions-webapi-role-arn"

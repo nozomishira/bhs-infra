@@ -12,6 +12,10 @@
     "ParameterValue": "bhs-webapp"
   },
   {
+    "ParameterKey": "WebApiRepo",
+    "ParameterValue": "bhs-webapi"
+  },
+  {
     "ParameterKey": "Branch",
     "ParameterValue": "test"
   },

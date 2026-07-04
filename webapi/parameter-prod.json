@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "Prefix",
+    "ParameterValue": "prod-apne1"
+  },
+  {
+    "ParameterKey": "Env",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "WebAppOrigin",
+    "ParameterValue": "https://xxxxx.cloudfront.net"
+  },
+  {
+    "ParameterKey": "LambdaRuntime",
+    "ParameterValue": "nodejs24.x"
+  }
+]

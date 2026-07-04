@@ -1,29 +1,166 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Minimal DynamoDB table for quiz progress or other app data.
+Description: >-
+  DynamoDB tables for bhs-indonesia-webapp.
+  - bhs-questions    : 問題データ (Level別、タイプ別)
+  - bhs-quiz-sessions: クイズセッション記録 (将来のユーザー進捗管理用)
 
+# ===================================================
+# Parameters
+# ===================================================
 Parameters:
-  TableName:
+  Prefix:
     Type: String
-    Default: bhs-quiz-progress
-    Description: DynamoDB table name
+    Default: dev-apne1
+    Description: >-
+      環境プレフィックス (例: dev-apne1 / test-apne1 / prod-apne1)
+      テーブル名の先頭に付与して環境を分離する
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, test, prod]
 
+# ===================================================
+# Resources
+# ===================================================
 Resources:
-  QuizProgressTable:
+
+  # ---------------------------------------------------
+  # bhs-questions テーブル
+  #
+  # アクセスパターン:
+  #   1. レベルを指定して全問題IDを取得 → Query (PK = "LEVEL#NN")
+  #   2. タイプ+レベルで絞り込み       → Query on GSI (type-level-index)
+  #   3. 複数問題を一括取得             → BatchGetItem (pk + sk)
+  #
+  # ランダム取得:
+  #   DynamoDB はネイティブのランダム取得非対応のため、
+  #   Lambda 側で全IDを取得してシャッフル → BatchGetItem で N件取得
+  # ---------------------------------------------------
+  QuestionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Ref TableName
+      TableName: !Sub "${Prefix}-bhs-questions"
       BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: id
-          KeyType: HASH
+      # オンデマンド課金: アクセスがない月は実質$0
 
+      # ------- キー定義 -------
+      AttributeDefinitions:
+        - AttributeName: pk          # "LEVEL#01" 〜 "LEVEL#50"
+          AttributeType: S
+        - AttributeName: sk          # "QUESTION#<uuid>"
+          AttributeType: S
+        - AttributeName: type        # "vocabulary" / "grammar"
+          AttributeType: S
+        - AttributeName: level       # 数値レベル (1〜50) ※GSI用にS型で格納
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      # ------- GSI: タイプ別・レベル別フィルタリング -------
+      # 用途: 管理アプリでのフィルタ / 将来の検定タイプ別出題
+      GlobalSecondaryIndexes:
+        - IndexName: type-level-index
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+            - AttributeName: level
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+      # ------- ストリーム (将来のユーザー進捗集計に備えて有効化) -------
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+      # ------- ポイントインタイムリカバリ -------
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+
+      Tags:
+        - Key: Project
+          Value: bhs-indonesia-webapp
+        - Key: Env
+          Value: !Ref Env
+
+  # ---------------------------------------------------
+  # bhs-quiz-sessions テーブル
+  #
+  # 現時点: セッションIDで匿名記録
+  # Cognito 導入後: PK を USER#<cognitoId> に変更または GSI 追加
+  # TTL: 90日後に自動削除してコスト抑制
+  # ---------------------------------------------------
+  QuizSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-bhs-quiz-sessions"
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: pk          # "SESSION#<uuid>"
+          AttributeType: S
+        - AttributeName: sk          # "METADATA" (固定値)
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      # TTL 属性名を指定 (値は Lambda 側で Unix タイムスタンプをセット)
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+
+      Tags:
+        - Key: Project
+          Value: bhs-indonesia-webapp
+        - Key: Env
+          Value: !Ref Env
+
+# ===================================================
+# Conditions
+# ===================================================
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+# ===================================================
+# Outputs
+# ===================================================
 Outputs:
-  TableName:
-    Description: DynamoDB table name
-    Value: !Ref QuizProgressTable
-  TableArn:
-    Description: DynamoDB table ARN
-    Value: !GetAtt QuizProgressTable.Arn
+  QuestionsTableName:
+    Description: Questions DynamoDB table name
+    Value: !Ref QuestionsTable
+    Export:
+      Name: !Sub "${Prefix}-bhs-questions-table-name"
+
+  QuestionsTableArn:
+    Description: Questions DynamoDB table ARN
+    Value: !GetAtt QuestionsTable.Arn
+    Export:
+      Name: !Sub "${Prefix}-bhs-questions-table-arn"
+
+  QuestionsTableStreamArn:
+    Description: Questions DynamoDB stream ARN
+    Value: !GetAtt QuestionsTable.StreamArn
+    Export:
+      Name: !Sub "${Prefix}-bhs-questions-table-stream-arn"
+
+  QuizSessionsTableName:
+    Description: Quiz sessions DynamoDB table name
+    Value: !Ref QuizSessionsTable
+    Export:
+      Name: !Sub "${Prefix}-bhs-quiz-sessions-table-name"
+
+  QuizSessionsTableArn:
+    Description: Quiz sessions DynamoDB table ARN
+    Value: !GetAtt QuizSessionsTable.Arn
+    Export:
+      Name: !Sub "${Prefix}-bhs-quiz-sessions-table-arn"

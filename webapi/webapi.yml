@@ -1,16 +1,51 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Minimal CloudFormation template creating a Lambda function and an HTTP API (API Gateway v2) wired to the function.
+Description: >-
+  API Gateway (HTTP API v2) + Lambda (quiz-api) for bhs-indonesia-webapp.
+  Lambda のコードは CI/CD パイプラインでデプロイする想定のため、
+  このテンプレートではインフラ設定のみを管理する。
+  将来 chat-api / voice-api など別 Lambda を追加する場合は
+  webapi/ 配下に別テンプレートを追加する。
 
+# ===================================================
+# Parameters
+# ===================================================
 Parameters:
-  FunctionName:
+  Prefix:
     Type: String
-    Default: bhs-webapi-function
-    Description: Lambda function name
+    Default: dev-apne1
+    Description: 環境prefix 例 dev-apne1 test-apne1 prod-apne1
 
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, test, prod]
+
+  LambdaRuntime:
+    Type: String
+    Default: nodejs24.x
+    Description: Lambda ランタイム (Node.js LTS)
+
+  WebAppOrigin:
+    Type: String
+    Default: "*"
+    Description: >-
+      CORS AllowOrigin。
+      dev は "*"、prod は CloudFront ドメインを指定する
+      例: https://xxxxx.cloudfront.net
+
+# ===================================================
+# Resources
+# ===================================================
 Resources:
-  WebApiExecutionRole:
+
+  # ---------------------------------------------------
+  # IAM Role: quiz-api Lambda 実行ロール
+  # DynamoDB への読み書き権限を付与
+  # ---------------------------------------------------
+  QuizApiExecutionRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub "${Prefix}-bhs-quiz-api-lambda-role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -19,63 +54,192 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
+        # CloudWatch Logs への書き込み
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub "${Prefix}-bhs-quiz-api-dynamodb-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Questions テーブル: 読み取り専用
+              - Sid: ReadQuestions
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-questions"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-questions/index/*"
 
-  WebApiFunction:
+              # Quiz Sessions テーブル: 読み書き
+              - Sid: WriteQuizSessions
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-quiz-sessions"
+
+  # ---------------------------------------------------
+  # Lambda Function: quiz-api ハンドラ
+  # コードは CI/CD でデプロイ。ここではプレースホルダーのみ
+  # モノレポ: bhs-webapi/packages/quiz-api でビルド → function.zip
+  # ---------------------------------------------------
+  QuizApiFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Ref FunctionName
-      Runtime: nodejs18.x
+      FunctionName: !Sub "${Prefix}-bhs-quiz-api"
+      Description: "bhs quiz API: 問題取得・セッション記録 (bhs-webapi/packages/quiz-api)"
+      Runtime: !Ref LambdaRuntime
       Handler: index.handler
-      Role: !GetAtt WebApiExecutionRole.Arn
+      Role: !GetAtt QuizApiExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          QUESTIONS_TABLE: !Sub "${Prefix}-bhs-questions"
+          SESSIONS_TABLE: !Sub "${Prefix}-bhs-quiz-sessions"
+          ENV: !Ref Env
+          CORS_ORIGIN: !Ref WebAppOrigin
+      # プレースホルダーコード。CI/CD で上書きされる
       Code:
         ZipFile: |
           exports.handler = async (event) => {
             return {
               statusCode: 200,
-              body: JSON.stringify({ message: 'Hello from bhs-webapi' })
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: 'bhs-quiz-api placeholder - deploy via CI/CD' })
             };
           };
+      Tags:
+        - Key: Project
+          Value: bhs-indonesia-webapp
+        - Key: Env
+          Value: !Ref Env
 
+  # CloudWatch Logs グループ
+  # 保持期間: 全環境 3日（コスト最小化）
+  QuizApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${QuizApiFunction}"
+      RetentionInDays: 3
+
+  # ---------------------------------------------------
+  # API Gateway v2 (HTTP API)
+  # REST API より安価かつシンプル。
+  # 将来 chat-api などを追加する場合は別 HttpApi を作るか、
+  # このテンプレートにルートを追加する。
+  # ---------------------------------------------------
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: bhs-webapi-httpapi
+      Name: !Sub "${Prefix}-bhs-http-api"
+      Description: bhs-indonesia-webapp HTTP API
       ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref WebAppOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        MaxAge: 300
 
-  LambdaIntegration:
+  # Lambda 統合
+  QuizApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebApiFunction.Arn}/invocations
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${QuizApiFunction.Arn}/invocations"
+      PayloadFormatVersion: '2.0'
 
-  DefaultRoute:
+  # ------- ルート定義 -------
+
+  # GET /health
+  RouteHealth:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: "$default"
-      Target: !Sub "integrations/${LambdaIntegration}"
+      RouteKey: "GET /health"
+      Target: !Sub "integrations/${QuizApiIntegration}"
 
+  # GET /levels
+  RouteLevels:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /levels"
+      Target: !Sub "integrations/${QuizApiIntegration}"
+
+  # GET /questions?level=1&type=vocabulary&count=10
+  RouteQuestions:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /questions"
+      Target: !Sub "integrations/${QuizApiIntegration}"
+
+  # POST /sessions
+  RouteSessions:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /sessions"
+      Target: !Sub "integrations/${QuizApiIntegration}"
+
+  # ステージ（$default = URL パスにステージ名が入らない）
   ApiStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
       ApiId: !Ref HttpApi
       StageName: "$default"
       AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
 
+  # Lambda への実行許可
   PermissionForAPIGateway:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref WebApiFunction
+      FunctionName: !Ref QuizApiFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*"
 
+# ===================================================
+# Outputs
+# ===================================================
 Outputs:
   ApiEndpoint:
-    Description: HTTP API endpoint
-    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
-  LambdaArn:
-    Description: Lambda function ARN
-    Value: !GetAtt WebApiFunction.Arn
+    Description: HTTP API endpoint URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${Prefix}-bhs-http-api-endpoint"
+
+  QuizApiFunctionName:
+    Description: quiz-api Lambda function name
+    Value: !Ref QuizApiFunction
+    Export:
+      Name: !Sub "${Prefix}-bhs-quiz-api-function-name"
+
+  QuizApiArn:
+    Description: quiz-api Lambda function ARN
+    Value: !GetAtt QuizApiFunction.Arn
+    Export:
+      Name: !Sub "${Prefix}-bhs-quiz-api-function-arn"
+
+  QuizApiRoleArn:
+    Description: quiz-api Lambda execution role ARN
+    Value: !GetAtt QuizApiExecutionRole.Arn
+    Export:
+      Name: !Sub "${Prefix}-bhs-quiz-api-role-arn"
