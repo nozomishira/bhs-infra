@@ -51,7 +51,7 @@ Resources:
           AttributeType: S
         - AttributeName: type        # "vocabulary" / "grammar"
           AttributeType: S
-        - AttributeName: level       # 数値レベル (1〜50) ※GSI用にS型で格納
+        - AttributeName: levelKey    # "01" 〜 "50" (ゼロ埋め2桁、GSI用)
           AttributeType: S
 
       KeySchema:
@@ -67,7 +67,7 @@ Resources:
           KeySchema:
             - AttributeName: type
               KeyType: HASH
-            - AttributeName: level
+            - AttributeName: levelKey
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
