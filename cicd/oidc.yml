@@ -111,6 +111,7 @@ Resources:
                   - cloudformation:DescribeStacks
                 Resource:
                   - !Sub "arn:aws:cloudformation:ap-northeast-1:${AWS::AccountId}:stack/${Env}-bhs-indonesia-webapp/*"
+                  - !Sub "arn:aws:cloudformation:ap-northeast-1:${AWS::AccountId}:stack/${Env}-bhs-indonesia-webapi/*"
 
   # ---------------------------------------------------
   # IAMロール (webapi用): Lambda コードのデプロイ
