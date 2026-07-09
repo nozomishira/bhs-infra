@@ -306,6 +306,22 @@ Resources:
       RouteKey: "POST /chat"
       Target: !Sub "integrations/${ChatApiIntegration}"
 
+  # GET /chat/scenarios ルート
+  RouteChatScenarios:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /chat/scenarios"
+      Target: !Sub "integrations/${ChatApiIntegration}"
+
+  # GET /chat/health ルート
+  RouteChatHealth:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /chat/health"
+      Target: !Sub "integrations/${ChatApiIntegration}"
+
   # Lambda への実行許可 (chat-api)
   PermissionForAPIGatewayChatApi:
     Type: AWS::Lambda::Permission
