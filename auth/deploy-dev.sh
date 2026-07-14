@@ -39,7 +39,7 @@ aws cloudformation deploy \
     Env=dev \
     GoogleClientId="$GOOGLE_CLIENT_ID" \
     GoogleClientSecret="$GOOGLE_CLIENT_SECRET" \
-    CallbackUrl=https://d3oi52j21x9aqt.cloudfront.net/auth/callback \
+    CallbackUrl=https://d3oi52j21x9aqt.cloudfront.net/auth/callback.html \
     LogoutUrl=https://d3oi52j21x9aqt.cloudfront.net \
   --region "$REGION"
 
