@@ -82,6 +82,16 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-quiz-sessions"
 
+              # User Profiles テーブル: 読み書き
+              - Sid: UserProfiles
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-user-profiles"
+
   # ---------------------------------------------------
   # Lambda Function: quiz-api ハンドラ
   # コードは CI/CD でデプロイ。ここではプレースホルダーのみ
@@ -101,6 +111,7 @@ Resources:
         Variables:
           QUESTIONS_TABLE: !Sub "${Prefix}-bhs-questions"
           SESSIONS_TABLE: !Sub "${Prefix}-bhs-quiz-sessions"
+          USER_PROFILES_TABLE: !Sub "${Prefix}-bhs-user-profiles"
           ENV: !Ref Env
           CORS_ORIGIN: !Ref WebAppOrigin
       # プレースホルダーコード。CI/CD で上書きされる
@@ -140,6 +151,7 @@ Resources:
         AllowMethods:
           - GET
           - POST
+          - PUT
           - OPTIONS
         AllowHeaders:
           - Content-Type
@@ -187,6 +199,22 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: "POST /sessions"
+      Target: !Sub "integrations/${QuizApiIntegration}"
+
+  # GET /profile
+  RouteGetProfile:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /profile"
+      Target: !Sub "integrations/${QuizApiIntegration}"
+
+  # PUT /profile
+  RoutePutProfile:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PUT /profile"
       Target: !Sub "integrations/${QuizApiIntegration}"
 
   # ステージ

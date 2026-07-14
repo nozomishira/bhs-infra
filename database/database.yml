@@ -164,6 +164,34 @@ Resources:
         - Key: Env
           Value: !Ref Env
 
+  # ---------------------------------------------------
+  # bhs-user-profiles テーブル
+  #
+  # ユーザープロフィール情報を保存。
+  # PK: COGNITO#<sub>  (Cognito sub で検索)
+  # SK: PROFILE (固定)
+  # ---------------------------------------------------
+  UserProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-bhs-user-profiles"
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+
 # ===================================================
 # Conditions
 # ===================================================
@@ -215,3 +243,15 @@ Outputs:
     Value: !GetAtt ChatSessionsTable.Arn
     Export:
       Name: !Sub "${Prefix}-bhs-chat-sessions-table-arn"
+
+  UserProfilesTableName:
+    Description: User profiles DynamoDB table name
+    Value: !Ref UserProfilesTable
+    Export:
+      Name: !Sub "${Prefix}-bhs-user-profiles-table-name"
+
+  UserProfilesTableArn:
+    Description: User profiles DynamoDB table ARN
+    Value: !GetAtt UserProfilesTable.Arn
+    Export:
+      Name: !Sub "${Prefix}-bhs-user-profiles-table-arn"

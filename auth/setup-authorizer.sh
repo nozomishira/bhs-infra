@@ -63,6 +63,8 @@ AUTH_ROUTES=(
   "POST /chat/history"
   "GET /chat/history"
   "GET /chat/history/{sessionId}"
+  "GET /profile"
+  "PUT /profile"
 )
 
 # 認証不要にするルート（Authorizer を外す）
