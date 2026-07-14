@@ -113,11 +113,6 @@ Resources:
               body: JSON.stringify({ message: 'bhs-quiz-api placeholder - deploy via CI/CD' })
             };
           };
-      Tags:
-        - Key: Project
-          Value: bhs-indonesia-webapp
-        - Key: Env
-          Value: !Ref Env
 
   # CloudWatch Logs グループ
   # 保持期間: 全環境 3日（コスト最小化）
@@ -162,7 +157,7 @@ Resources:
 
   # ------- ルート定義 -------
 
-  # GET /health
+  # GET /health (認証なし - ヘルスチェック用)
   RouteHealth:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -178,7 +173,7 @@ Resources:
       RouteKey: "GET /levels"
       Target: !Sub "integrations/${QuizApiIntegration}"
 
-  # GET /questions?level=1&type=vocabulary&count=10
+  # GET /questions
   RouteQuestions:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -194,7 +189,7 @@ Resources:
       RouteKey: "POST /sessions"
       Target: !Sub "integrations/${QuizApiIntegration}"
 
-  # ステージ（$default = URL パスにステージ名が入らない）
+  # ステージ
   ApiStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
@@ -245,10 +240,19 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  # Claude Haiku 4.5 (JP inference profile)
                   - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/jp.anthropic.claude-haiku-4-5-20251001-v1:0"
-                  # モデル本体の ARN も必要
                   - "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+
+              # DynamoDB: Chat Sessions テーブル読み書き
+              - Sid: ChatSessionsDynamoDB
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Prefix}-bhs-chat-sessions"
 
   # Lambda Function: chat-api
   ChatApiFunction:
@@ -267,6 +271,7 @@ Resources:
           CORS_ORIGIN: !Ref WebAppOrigin
           BEDROCK_MODEL_ID: jp.anthropic.claude-haiku-4-5-20251001-v1:0
           BEDROCK_REGION: ap-northeast-1
+          CHAT_SESSIONS_TABLE: !Sub "${Prefix}-bhs-chat-sessions"
       Code:
         ZipFile: |
           exports.handler = async (event) => {
@@ -276,11 +281,6 @@ Resources:
               body: JSON.stringify({ message: 'bhs-chat-api placeholder - deploy via CI/CD' })
             };
           };
-      Tags:
-        - Key: Project
-          Value: bhs-indonesia-webapp
-        - Key: Env
-          Value: !Ref Env
 
   # CloudWatch Logs (chat-api)
   ChatApiFunctionLogGroup:
@@ -328,6 +328,30 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: "POST /chat/evaluate"
+      Target: !Sub "integrations/${ChatApiIntegration}"
+
+  # POST /chat/history ルート
+  RouteChatHistorySave:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /chat/history"
+      Target: !Sub "integrations/${ChatApiIntegration}"
+
+  # GET /chat/history ルート
+  RouteChatHistoryList:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /chat/history"
+      Target: !Sub "integrations/${ChatApiIntegration}"
+
+  # GET /chat/history/{sessionId} ルート
+  RouteChatHistoryDetail:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /chat/history/{sessionId}"
       Target: !Sub "integrations/${ChatApiIntegration}"
 
   # Lambda への実行許可 (chat-api)

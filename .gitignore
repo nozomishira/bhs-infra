@@ -2,3 +2,6 @@
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+
+# auth パラメータファイル（Google Client Secret を含むため）
+auth/parameter-*.json
